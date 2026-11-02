@@ -1,0 +1,79 @@
+// ---------------------------------------------------------------------------
+// AUTO-GENERATED from {{ schema_file }} - DO NOT EDIT BY HAND
+// Protocol: {{ protocol }} / {{ exchange }}  (schema v{{ schema_version }})
+// Regenerate with: python generator/render_encoder.py
+// ---------------------------------------------------------------------------
+#pragma once
+
+#include <cstdint>
+#include <cstddef>
+
+#include "BOE_Msgs.h"
+#include "../common/EncodeUtils.h"
+
+namespace boe {
+
+{% for msg in messages %}
+// ---------------------------------------------------------------------------
+// encode_{{ msg.name }} - serializes msg into buffer.
+// Returns success=false (without writing anything) if buffer is too
+// small; never partially writes a message.
+// ---------------------------------------------------------------------------
+inline EncodeResult encode_{{ msg.name }}(const {{ msg.name }}& msg,
+                                           std::uint8_t* buffer,
+                                           std::size_t buffer_size) {
+    const std::size_t required_size = {{ msg.fixed_part_bytes }}
+{% for g in msg.groups %}
+        + msg.{{ g.name }}.size() * {{ g.element_bytes }}
+{% endfor %}
+    ;
+    if (buffer_size < required_size) {
+        return EncodeResult{false, 0, "buffer too small for {{ msg.name }}"};
+    }
+
+    std::size_t offset = 0;
+    std::size_t message_length_offset = 0;
+
+{% for step in msg.steps %}
+{% if step.op == 'const' %}
+    write_u{{ step.bits }}{% if step.bits > 8 %}_le{% endif %}(buffer, offset, {{ msg.name }}::{{ step.name }});
+    offset += {{ step.bytes }};
+{% elif step.op == 'computed_reserve' %}
+    message_length_offset = offset;   // {{ step.name }}: patched after full message is written
+    offset += {{ step.bytes }};
+{% elif step.op == 'int' %}
+    write_u{{ step.bits }}{% if step.bits > 8 %}_le{% endif %}(buffer, offset, msg.{{ step.name }});
+    offset += {{ step.bytes }};
+{% elif step.op == 'string' %}
+    write_fixed_string(buffer, offset, msg.{{ step.name }}.data(), {{ step.bytes }});
+    offset += {{ step.bytes }};
+{% elif step.op == 'enum_char' %}
+    buffer[offset] = static_cast<char>(msg.{{ step.name }});
+    offset += {{ step.bytes }};
+{% elif step.op == 'group_count' %}
+    // Derived from the group's actual size, not the (possibly stale) stored field.
+    write_u{{ step.bits }}{% if step.bits > 8 %}_le{% endif %}(buffer, offset, static_cast<std::uint8_t>(msg.{{ step.group_field }}.size()));
+    offset += {{ step.bytes }};
+{% endif %}
+{% endfor %}
+{% for g in msg.groups %}
+    for (const auto& entry : msg.{{ g.name }}) {
+{% for gf in g.fields %}
+{% if gf.op == 'int' %}
+        write_u{{ gf.bits }}{% if gf.bits > 8 %}_le{% endif %}(buffer, offset, entry.{{ gf.name }});
+        offset += {{ gf.bytes }};
+{% elif gf.op == 'string' %}
+        write_fixed_string(buffer, offset, entry.{{ gf.name }}.data(), {{ gf.bytes }});
+        offset += {{ gf.bytes }};
+{% endif %}
+{% endfor %}
+    }
+{% endfor %}
+    const std::uint16_t message_length = static_cast<std::uint16_t>(offset - 2);
+    write_u16_le(buffer, message_length_offset, message_length);
+
+    return EncodeResult{true, offset, nullptr};
+}
+
+{% endfor %}
+} // namespace boe
